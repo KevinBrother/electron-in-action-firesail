@@ -1,14 +1,24 @@
-const {app, BrowserWindow, dialog} = require('electron')
-const fs = require('fs')
+const {app, BrowserWindow, dialog, Menu} = require('electron');
+const applicationMenu = require('./application-menu');
+const fs = require('fs');
 
 let mainWindow;
-app.on('ready', ()=> {
-    console.log('electron is ready 准备了 !!!')
+let windows = new Set();
 
-    // 1. 创建窗口，加载index.html
-    mainWindow = new BrowserWindow({
+const createWindow = exports.createWindow = () => {
+    let x, y;
+    const currentWindow = BrowserWindow.getFocusedWindow();
+    if(currentWindow) {
+        const [currentWindowX, currentWindowY] = currentWindow.getPosition();
+        x = currentWindowX + 10;
+        y = currentWindowY + 10;
+    }
+
+
+    let newWindow = new BrowserWindow({
+        x,
+        y,
         webPreferences: {
-
             /*首次创建窗口先隐藏*/
             show: false,
             /*添加对渲染进程的node框架支持*/
@@ -20,47 +30,71 @@ app.on('ready', ()=> {
             defaultEncoding: 'UTF-8',
         }
     });
+
     // TODO 这个loadFile路径很奇怪
-    mainWindow.loadFile('app/index.html')
+    newWindow.loadFile('app/index.html')
         .catch(err => {
-        console.log('loadFile index.html fail', err)
+            console.log('loadFile index.html fail', err)
+        })
+
+
+    newWindow.once('ready-to-show', () => {
+        newWindow.show();
     })
 
-    mainWindow.once('ready-to-show', () => {
-        mainWindow.show();
-        mainWindow.webContents.openDevTools();
+
+    newWindow.on('closed', () => {
+        windows.delete(newWindow);
     })
 
-    mainWindow.on('closed', () => {
-        mainWindow = null;
+    windows.add(newWindow);
+    return newWindow;
+}
+
+const getFileFromUser = exports.getFileFromUser =  (targetWindow) => {
+    dialog.showOpenDialog(targetWindow, {
+        properties: ['openFile'],
+        filters: [
+            {name: 'Text Files',extensions:['txt']},
+            // TODO 不支持md格式的文件啊 为啥
+            {name: 'Markdown Files',extensions:['md']},
+        ]
+    }).then(files => {
+        // console.log(files)
+        const filePaths = files.filePaths;
+        if(files.filePaths.length === 0) {
+            return
+        };
+
+        openFile(targetWindow, filePaths)
     })
+}
 
-    const getFileFromUser = () => {
-        dialog.showOpenDialog(mainWindow, {
-            properties: ['openFile'],
-            filters: [
-                {name: 'Text Files',extensions:['txt']},
-                // TODO 不支持md格式的文件啊 为啥
-                {name: 'Markdown Files',extensions:['md']},
-            ]
-        }).then(files => {
-            // console.log(files)
-            const filePaths = files.filePaths;
-            if(files.filePaths.length === 0) {
-                return
-            };
-            return filePaths
-        }).then(openFile)
-    }
+const openFile = (targetWindow, filePaths) => {
+    const file = filePaths[0];
+    let content = fs.readFileSync(file).toString();
+    console.log(content);
+    targetWindow.webContents.send('file-opened', [{file, content}]);
+}
 
-    const openFile = (filePaths) => {
-        const file = filePaths[0];
-        let content = fs.readFileSync(file).toString();
-        console.log(content);
-        mainWindow.webContents.send('file-opened', [{file, content}]);
-    }
-
-    exports.getFileFromUser = getFileFromUser;
+app.on('ready', ()=> {
+    console.log('electron is ready 准备了 !!!')
+    Menu.setApplicationMenu(applicationMenu);
+    mainWindow = createWindow();
 })
 
+app.on('window-all-closed', () => {
+    if(process.platform === 'darwin') {
+        return false
+    }
+
+    app.quit()
+})
+
+// 只有macOS有效，Windows和Linux的需要另外方法实现
+app.on('activate', (event, hasVisibleWindows) => {
+    if(!hasVisibleWindows) {
+        createWindow();
+    }
+})
 
